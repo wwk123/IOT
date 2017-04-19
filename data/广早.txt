@@ -1,0 +1,243 @@
+/*
+ Yeelink sensor client example
+ */
+  double Fahrenheit(double celsius) 
+{
+        return 1.8 * celsius + 32;
+}    //摄氏温度度转化为华氏温度
+ 
+double Kelvin(double celsius)
+{
+        return celsius + 273.15;
+}     //摄氏温度转化为开氏温度
+ 
+// 露点（点在此温度时，空气饱和并产生露珠）
+// 参考: [url=http://wahiduddin.net/calc/density_algorithms.htm]http://wahiduddin.net/calc/density_algorithms.htm[/url] 
+double dewPoint(double celsius, double humidity)
+{
+        double A0= 373.15/(273.15 + celsius);
+        double SUM = -7.90298 * (A0-1);
+        SUM += 5.02808 * log10(A0);
+        SUM += -1.3816e-7 * (pow(10, (11.344*(1-1/A0)))-1) ;
+        SUM += 8.1328e-3 * (pow(10,(-3.49149*(A0-1)))-1) ;
+        SUM += log10(1013.246);
+        double VP = pow(10, SUM-3) * humidity;
+        double T = log(VP/0.61078);   // temp var
+        return (241.88 * T) / (17.558-T);
+}
+ 
+// 快速计算露点，速度是5倍dewPoint()
+// 参考: [url=http://en.wikipedia.org/wiki/Dew_point]http://en.wikipedia.org/wiki/Dew_point[/url]
+double dewPointFast(double celsius, double humidity)
+{
+        double a = 17.271;
+        double b = 237.7;
+        double temp = (a * celsius) / (b + celsius) + log(humidity/100);
+        double Td = (b * temp) / (a - temp);
+        return Td;
+}
+
+#include <SPI.h>
+#include <Ethernet.h>
+#include <Wire.h>
+#include <math.h>
+#include <dht11.h>
+
+int BH1750address = 0x23;
+byte buff[2];
+
+struct sensor
+{
+  /*public://外部接口共有函数成员
+  void show(int Send_Data[2]);
+   private:*/
+    int Data;
+    int DEVICEID;
+    int SENSORID;
+   
+ };
+
+
+// for yeelink api
+#define APIKEY         "6075bf219d21a6bcf4726e0c8a77bfda" // replace your yeelink api key here
+#define DEVICE_GY_30_ID       356528 // replace your device ID
+#define SENSOR_GY_30_ID       404012 // replace your sensor IDhttp://api.yeelink.net/v1.0/device/356528/sensor/404012/datapoints
+#define DHT11PIN 2
+#define LIGHTPIN 8
+dht11 DHT11;
+// assign a MAC address for the ethernet controller.
+byte mac[] = { 0x00, 0x1D, 0x72, 0x82, 0x35, 0x9D};
+// initialize the library instance:
+EthernetClient client;
+char server[] = "api.yeelink.net";   // name address for yeelink API
+
+unsigned long lastConnectionTime = 0;          // last time you connected to the server, in milliseconds
+boolean lastConnected = false;                 // state of the connection last time through the main loop
+const unsigned long postingInterval = 3*1000; // delay between 2 datapoints, 30s
+
+void setup() {
+  Wire.begin();
+  // start serial port:
+  Serial.begin(57600);
+  
+  pinMode (LIGHTPIN,OUTPUT);
+  // start the Ethernet connection with DHCP:
+  if (Ethernet.begin(mac) == 0) {
+    Serial.println("Failed to configure Ethernet using DHCP");
+    for(;;)
+      ;
+  }
+  else {
+    Serial.println("Ethernet configuration OK");
+  }
+}
+
+
+ sensor mysensor;
+// this method makes a HTTP connection to the server:
+void sendData(int thisData) {
+
+
+  // if there's a successful connection:
+  if (client.connect(server, 80)) {
+    Serial.println("connecting...");
+    // send the HTTP PUT request:
+    client.print("POST /v1.0/device/");
+    client.print(mysensor.DEVICEID);
+    client.print("/sensor/");
+    client.print(mysensor.SENSORID);
+    client.print("/datapoints");
+    client.println(" HTTP/1.1");
+    client.println("Host: api.yeelink.net");
+    client.print("Accept: *");
+    client.print("/");
+    client.println("*");
+    client.print("U-ApiKey: ");
+    client.println(APIKEY);
+    client.print("Content-Length: ");
+
+    // calculate the length of the sensor reading in bytes:
+    // 8 bytes for {"value":} + number of digits of the data:
+    int thisLength = 10 + getLength(thisData);
+    client.println(thisData);
+
+    client.println("Content-Type: application/x-www-form-urlencoded");
+    client.println("Connection: close");
+    client.println();
+
+    // here's the actual content of the PUT request:
+    client.print("{\"value\":");
+    client.print(thisData);
+    client.println("}");
+  }
+  else {
+    // if you couldn't make a connection:
+    Serial.println("connection failed");
+    Serial.println();
+    Serial.println("disconnecting.");
+    client.stop();
+  }
+   // note the time that the connection was made or attempted:
+  lastConnectionTime = millis();
+}
+
+void loop() {
+  
+  // if there's incoming data from the net connection.
+  // send it out the serial port.  This is for debugging
+  // purposes only:
+  if (client.available()) {
+    char c = client.read();
+    Serial.print(c);
+  }
+
+  // if there's no net connection, but there was one last time
+  // through the loop, then stop the client:
+  if (!client.connected() && lastConnected) {
+    Serial.println();
+    Serial.println("disconnecting.");
+    client.stop();
+  }
+
+  // if you're not connected, and ten seconds have passed since
+  // your last connection, then connect again and send data:
+  if(!client.connected() && (millis() - lastConnectionTime > postingInterval)) {
+    // read sensor data, replace with your code
+    int sensorReading_GY_30 = readLightSensor();
+    mysensor.Data=sensorReading_GY_30;
+    mysensor.DEVICEID=DEVICE_GY_30_ID;
+    mysensor.SENSORID=SENSOR_GY_30_ID;
+    //send data to server
+   sendData(mysensor.Data);
+
+    //delay(200);
+   // int chk = DHT11.read(DHT11PIN);
+     //float  hum=   (float)DHT11.humidity;
+     //send data to server
+    //sendData(hum);
+    //Serial.println(hum);
+  }
+  // store the state of the connection for next time through
+  // the loop:
+  lastConnected = client.connected();
+}
+
+
+// This method calculates the number of digits in the
+// sensor reading.  Since each digit of the ASCII decimal
+// representation is a byte, the number of digits equals
+// the number of bytes:
+int getLength(int someValue) {
+  // there's at least one byte:
+  int digits = 1;
+  // continually divide the value by ten,
+  // adding one to the digit count for each
+  // time you divide, until you're at 0:
+  int dividend = someValue /10;
+  while (dividend > 0) {
+    dividend = dividend /10;
+    digits++;
+  }
+  // return the number of digits:
+  return digits;
+}
+
+///////////////////////////////////////////////////////////////////////////
+// get data from light sensor
+// you can replace this code for your sensor
+int readLightSensor()
+{
+  uint16_t val=0;
+  BH1750_Init(BH1750address);
+  delay(200);
+  if(2==BH1750_Read(BH1750address))
+  {
+    val=((buff[0]<<8)|buff[1])/1.2;
+  }
+
+  Serial.print("Sensor value is: ");
+  Serial.println((int)val);
+
+  return val;
+}
+
+int BH1750_Read(int address) //
+{
+  int i=0;
+  Wire.beginTransmission(address);
+  Wire.requestFrom(address, 2);
+  while(Wire.available()) //
+  {
+    buff[i] = Wire.read();  // receive one byte
+    i++;
+  }
+  Wire.endTransmission();
+  return i;
+}
+
+void BH1750_Init(int address)
+{
+  Wire.beginTransmission(address);
+  Wire.write(0x10);//1lx reolution 120ms
+  Wire.endTransmission();
+}

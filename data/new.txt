@@ -1,0 +1,244 @@
+// include the library code:
+#include <LiquidCrystal.h>
+#include <SPI.h>
+#include <Wire.h>
+#include <Ethernet.h>
+#include <dht11.h>
+
+// initialize the library with the numbers of the interface pins
+//LiquidCrystal lcd(9, 8, A0, A1, A2, A3); 
+int BH1750address = 0x23;
+byte buff[2];
+dht11 DHT11;
+#define DHT11PIN 3 //DHT11 PIN 3 Á¬½ÓUNO 3
+#define LIGHTPIN 0 //light sensor > analog pin 0
+//api.yeelink.net/v1.0/device/356566/sensor/404097/datapoints
+#define APIKEY         "dc05af7798732ebe989d2a76b628e006" // replace your yeelink api key here
+#define DEVICEID                356566 // replace your device ID
+#define HUMIDITY_SENSORID       404097 // DHT11 humidity
+#define TEMPERATURE_SENSORID    404098 // DHT11 temperature
+#define LIGHT_SENSORID          404099 //light
+
+
+// assign a MAC address for the ethernet controller.
+byte mac[] = { 0x00, 0x1D, 0x72, 0x82, 0x35, 0x9D};
+// initialize the library instance:
+EthernetClient client;
+char server[] = "api.yeelink.net";   // name address for yeelink API
+
+unsigned long lastConnectionTime = 0;          // last time you connected to the server, in milliseconds
+boolean lastConnected = false;                 // state of the connection last time through the main loop
+const unsigned long postingInterval = 10*1000; // delay between 2 datapoints, 30s
+
+
+int sensor = 0;   //which sesor to read
+                  //0 temperature
+                  //1 humidity
+                  //2 light
+
+
+void setup()
+{
+  Serial.begin(115200);
+  // set up the LCD's number of columns and rows: 
+    lcd.begin(16,2);
+    pinMode(LIGHTPIN,OUTPUT);
+
+  if (Ethernet.begin(mac) == 0) {
+    Serial.println("Failed to configure Ethernet using DHCP");
+    for(;;)
+      ;
+  }
+  else {
+    Serial.println("Ethernet configuration OK");
+  }
+
+  Serial.println("DHT11 TEST PROGRAM ");
+  Serial.print("LIBRARY VERSION: ");
+  Serial.println(DHT11LIB_VERSION);
+  Serial.println();
+}
+
+void loop()
+{
+
+   set the cursor to (0,0):
+   lcd.setCursor(0, 0);
+    // print 
+   lcd.print("Hum (%):");
+   delay(500);
+    // set the cursor to (0,0):
+   lcd.setCursor(9, 0);
+    // print 
+   lcd.print(DHT11.humidity);
+    delay(500);
+     // set the cursor to (0,0):
+    lcd.setCursor(0, 1);
+    // print 
+    lcd.print("Tem (C):");
+   delay(500);
+    // set the cursor to (0,0):
+    lcd.setCursor(9, 1);
+    // print 
+     lcd.print(DHT11.temperature);
+     delay(500);
+  // if there's incoming data from the net connection.
+  // send it out the serial port.  This is for debugging
+  // purposes only:
+  if (client.available()) {
+    char c = client.read();
+    //Serial.print("NET:");
+    Serial.print(c);
+  }
+
+  // if there's no net connection, but there was one last time
+  // through the loop, then stop the client:
+  if (!client.connected() && lastConnected) {
+    Serial.println();
+    Serial.println("disconnecting.");
+    client.stop();
+  }
+
+  // if you're not connected, and ten seconds have passed since
+  // your last connection, then connect again and send data:
+  if(!client.connected() && (millis() - lastConnectionTime > postingInterval)) {
+    // read sensor data, replace with your code
+    //int sensorReading = readLightSensor();
+    //int tempC = analogRead(0)*500/1024;
+    //send data to server
+
+
+      switch(sensor){
+        case 0:
+          sendData(readSensor(HUMIDITY_SENSORID), HUMIDITY_SENSORID);
+          break;
+        case 1:
+          sendData(readSensor(TEMPERATURE_SENSORID), TEMPERATURE_SENSORID);
+          break;
+        case 2:
+          sendData(readSensor(LIGHT_SENSORID), LIGHT_SENSORID);
+         break;
+      }
+
+      if(++sensor > 1) sensor = 0;
+
+
+  }
+  // store the state of the connection for next time through
+  // the loop:
+  // 
+
+  lastConnected = client.connected();
+}
+
+
+int readSensor(long sensor_id){
+  Serial.println("\n");
+
+  if (sensor_id == LIGHT_SENSORID)
+  {
+    int v = analogRead(LIGHTPIN);
+    Serial.print("light:");
+    Serial.println(v);
+    return v;
+  }
+
+
+  int chk = DHT11.read(DHT11PIN);
+
+  Serial.print("Read sensor: ");
+  switch (chk)
+  {
+    case DHTLIB_OK: 
+                Serial.println("OK"); 
+                break;
+    case DHTLIB_ERROR_CHECKSUM: 
+                Serial.println("Checksum error"); 
+                break;
+    case DHTLIB_ERROR_TIMEOUT: 
+                Serial.println("Time out error"); 
+                break;
+    default: 
+                Serial.println("Unknown error"); 
+                break;
+  }
+
+  if(sensor_id == HUMIDITY_SENSORID){
+    Serial.print("Hum (%): ");
+    Serial.println(DHT11.humidity);
+
+    return DHT11.humidity;
+  }else{
+    Serial.print("Tem (C): ");
+    Serial.println(DHT11.temperature);
+
+    return DHT11.temperature;
+  }
+}
+
+
+void sendData(int thisData, long sensor_id) {
+  // if there's a successful connection:
+  if (client.connect(server, 80)) {
+    Serial.println("connecting...");
+    // send the HTTP PUT request:
+    client.print("POST /v1.0/device/");
+    client.print(DEVICEID);
+    client.print("/sensor/");
+    client.print(sensor_id);
+    client.print("/datapoints");
+    client.println(" HTTP/1.0");
+    client.println("Host: api.yeelink.net");
+    client.print("Accept: *");
+    client.print("/");
+    client.println("*");
+    client.print("U-ApiKey: ");
+    client.println(APIKEY);
+    client.print("Content-Length: ");
+
+    // calculate the length of the sensor reading in bytes:
+    // 8 bytes for {"value":} + number of digits of the data:
+    int thisLength = 10 + getLength(thisData);
+    client.println(thisLength);
+
+    client.println("Content-Type: application/x-www-form-urlencoded");
+    client.println("Connection: close");
+    client.println();
+
+    // here's the actual content of the PUT request:
+    client.print("{\"value\":");
+    client.print(thisData);
+    client.println("}");
+    client.stop();
+  }
+  else {
+    // if you couldn't make a connection:
+    // 
+
+    Serial.println("connection failed");
+    Serial.println();
+    Serial.println("disconnecting.");
+//    client.stop();
+  }
+   // note the time that the connection was made or attempted:
+  lastConnectionTime = millis();
+}
+
+// This method calculates the number of digits in the
+// sensor reading.  Since each digit of the ASCII decimal
+// representation is a byte, the number of digits equals
+// the number of bytes:
+int getLength(int someValue) {
+  // there's at least one byte:
+  int digits = 1;
+  // continually divide the value by ten,
+  // adding one to the digit count for each
+  // time you divide, until you're at 0:
+  int dividend = someValue /10;
+  while (dividend > 0) {
+    dividend = dividend /10;
+    digits++;
+  }
+  // return the number of digits:
+  return digits;
+}

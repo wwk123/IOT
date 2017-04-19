@@ -1,0 +1,290 @@
+// include the library code:
+#include <LiquidCrystal.h>
+#include <SPI.h>
+#include <Ethernet.h>
+#include <dht11.h>
+#include <Wire.h>
+#include <math.h>
+
+// initialize the library with the numbers of the interface pins
+//  LiquidCrystal lcd(9, 8, A0, A1, A2, A3); 
+#define DHT11PIN 3 //DHT11 PIN 3 连接UNO 3
+#define LIGHTPIN 0 //light sensor > analog pin 0
+#define humPIN A0
+
+//api.yeelink.net/v1.0/device/356561/sensor/404074/datapoints
+//传感器与网路 接口
+#define APIKEY         "dc05af7798732ebe989d2a76b628e006" // replace your yeelink api key here
+#define DEVICEID                356561 // replace your device ID
+#define TEMPERATURE_SENSORID    404074 // temperature
+#define HUMIDITY_SENSORID       404075 //humidity
+#define GY_30_SENSORID         404104 //光照强度
+#define YL_SENSORID       404111 // replace your sensor ID
+//#define LIGHT_SENSORID        33270 //light
+//使用函数声明
+int readYLSensor();
+
+// assign a MAC address for the ethernet controller.
+byte mac[] = { 0x00, 0x1D, 0x72, 0x82, 0x35, 0x9D};
+
+// initialize the library instance:
+EthernetClient client;
+
+//DHT11变量声明
+dht11 DHT11;
+
+//I2C地址
+int BH1750address = 0x23;
+
+//数据缓冲
+byte buff[2];
+byte YL_buff[2];
+
+char server[] = "api.yeelink.net";   // name address for yeelink API
+
+unsigned long lastConnectionTime = 0;          // last time you connected to the server, in milliseconds
+boolean lastConnected = false;                 // state of the connection last time through the main loop
+const unsigned long postingInterval = 10*1000; // delay between 2 datapoints, 30s
+
+//传感器使用初始位置也就是决定先采集那个传感器数据
+int sensor = 0;   //which sesor to read
+                  //0 temperature
+                  //1 humidity
+                  //2 light
+//界面初始化
+void Interface_UARTInit(void)
+{
+  Serial.println("\n\n\n\r");
+  Serial.println("\t\t =================================================\n\r");
+  Serial.println("\t\t     内蒙古工业大学 大学生科技创新实验室项目      \n\r");
+  Serial.println("\t\t ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n\r");
+  Serial.println("\t\t             物联网温室大棚实验平台               \n\r");
+  Serial.println("\t\t ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n\r");
+  Serial.println("\t\t        信息工程学院 物联网-13___王文科           \n\r");
+  Serial.println("\t\t ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n\r");
+  Serial.println("\t\t =================================================\n\r");
+  Serial.println("\n\n\n\r");
+}
+//MCU初始化
+void setup()
+{
+  Serial.begin(115200);
+  Wire.begin();
+  pinMode(humPIN,INPUT);
+  // set up the LCD's number of columns and rows: 
+//  lcd.begin(16,2);
+//  pinMode(LIGHTPIN,OUTPUT);
+  Interface_UARTInit();
+  if (Ethernet.begin(mac) == 0) {
+    Serial.println("Failed to configure Ethernet using DHCP");
+    for(;;)
+      ;
+  }
+  else {
+    Serial.println("Ethernet configuration OK");
+  } 
+}
+void loop()
+{
+  // if there's incoming data from the net connection.
+  // send it out the serial port.  This is for debugging
+  // purposes only:
+  if (client.available()) {
+    char c = client.read();
+    //Serial.print("NET:");
+    Serial.print(c);
+  }
+
+  // if there's no net connection, but there was one last time
+  // through the loop, then stop the client:
+  if (!client.connected() && lastConnected) {
+    Serial.println();
+    Serial.println("disconnecting.");
+    client.stop();
+  }
+
+  // if you're not connected, and ten seconds have passed since
+  // your last connection, then connect again and send data:
+  if(!client.connected() && (millis() - lastConnectionTime > postingInterval)) {
+    // read sensor data, replace with your code
+    //int sensorReading = readLightSensor();
+    //int tempC = analogRead(0)*500/1024;
+    //send data to server
+
+    // read sensor data, replace with your code
+    // 读取传感器的数据，将与您的代码
+    int Reading_GY_30 = readLightSensor();
+    int Reading_YL = readYLSensor();
+      switch(sensor){
+        case 0:
+          {sendData(readSensor(HUMIDITY_SENSORID), HUMIDITY_SENSORID);delay(50);}
+          break;
+        case 1:
+          {sendData(readSensor(TEMPERATURE_SENSORID), TEMPERATURE_SENSORID);delay(50);}
+          break;
+        case 2:
+          {sendData(Reading_GY_30, GY_30_SENSORID);delay(50);}
+          break;
+         case 3:
+          {sendData(Reading_YL, YL_SENSORID);delay(50);}
+          break;
+
+      }
+      if(++sensor > 4) sensor = 0;
+
+  }
+  // store the state of the connection for next time through
+  // the loop:
+  lastConnected = client.connected();
+}
+
+int readSensor(long sensor_id)
+{
+  Serial.println("\n");
+
+  int chk = DHT11.read(DHT11PIN);
+
+  Serial.print("Read sensor: ");
+  switch (chk)
+  {
+    case DHTLIB_OK: 
+                Serial.println("OK"); 
+                break;
+    case DHTLIB_ERROR_CHECKSUM: 
+                Serial.println("Checksum error"); 
+                break;
+    case DHTLIB_ERROR_TIMEOUT: 
+                Serial.println("Time out error"); 
+                break;
+    default: 
+                Serial.println("Unknown error"); 
+                break;
+  }
+  if(sensor_id == HUMIDITY_SENSORID)
+  {
+    Serial.print("Air humidity（空气湿度）value is: ");
+    Serial.println(DHT11.humidity);
+  Serial.print("（%RH）");
+    return DHT11.humidity;
+  }
+  else
+    {Serial.print("Air temperature（空气温度） value is:");
+    Serial.println(DHT11.temperature);
+    Serial.print("（C）");
+    return DHT11.temperature;
+    }
+}
+
+void sendData(int thisData, long sensor_id) {
+  // if there's a successful connection:
+  if (client.connect(server, 80)) {
+    Serial.println("connecting...");
+    // send the HTTP PUT request:
+    client.print("POST /v1.0/device/");
+    client.print(DEVICEID);
+    client.print("/sensor/");
+    client.print(sensor_id);
+    client.print("/datapoints");
+    client.println(" HTTP/1.0");
+    client.println("Host: api.yeelink.net");
+    client.print("Accept: *");
+    client.print("/");
+    client.println("*");
+    client.print("U-ApiKey: ");
+    client.println(APIKEY);
+    client.print("Content-Length: ");
+
+    // calculate the length of the sensor reading in bytes:
+    // 8 bytes for {"value":} + number of digits of the data:
+    int thisLength = 10 + getLength(thisData);
+    client.println(thisLength);
+
+    client.println("Content-Type: application/x-www-form-urlencoded");
+    client.println("Connection: close");
+    client.println();
+
+    // here's the actual content of the PUT request:
+    client.print("{\"value\":");
+    client.print(thisData);
+    client.println("}");
+    client.stop();
+  }
+  else {
+    // if you couldn't make a connection:
+    // 
+
+    Serial.println("connection failed");
+    Serial.println();
+    Serial.println("disconnecting.");
+//    client.stop();
+  }
+   // note the time that the connection was made or attempted:
+  lastConnectionTime = millis();
+}
+
+// This method calculates the number of digits in the
+// sensor reading.  Since each digit of the ASCII decimal
+// representation is a byte, the number of digits equals
+// the number of bytes:
+int getLength(int someValue) {
+  // there's at least one byte:
+  int digits = 1;
+  // continually divide the value by ten,
+  // adding one to the digit count for each
+  // time you divide, until you're at 0:
+  int dividend = someValue /10;
+  while (dividend > 0) {
+    dividend = dividend /10;
+    digits++;
+  }
+  // return the number of digits:
+  return digits;
+}
+
+int readLightSensor()
+{
+  uint16_t val=0;
+  BH1750_Init(BH1750address);
+  delay(200);
+  if(2==BH1750_Read(BH1750address))
+  {
+    val=((buff[0]<<8)|buff[1])/1.2;
+  }
+
+  Serial.print("Light intensity（光照强度）value is: ");
+  Serial.println((int)val);
+  Serial.print("（Lx）");
+  return val;
+}
+
+int BH1750_Read(int address) //
+{
+  int i=0;
+  Wire.beginTransmission(address);
+  Wire.requestFrom(address, 2);
+  while(Wire.available()) //
+  {
+    buff[i] = Wire.read();  // receive one byte
+    i++;
+  }
+  Wire.endTransmission();
+  return i;
+}
+void BH1750_Init(int address)
+{
+  Wire.beginTransmission(address);
+  Wire.write(0x10);//1lx reolution 120ms
+  Wire.endTransmission();
+}
+
+int readYLSensor()
+{
+  uint16_t val=0;
+  delay(200);
+  val = analogRead(humPIN);
+  Serial.print("Soil moisturevalue（土壤湿度） is: ");
+  Serial.println((int)val);
+  Serial.print("（%RH）");
+  
+  return val;
+}
